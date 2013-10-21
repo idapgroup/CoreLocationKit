@@ -1,4 +1,3 @@
 CoreLocationKit
 ===============
-
-Dependencies: DataKit.
+Dependencies: [DataKit](https://github.com/idapgroup/DataKit).
