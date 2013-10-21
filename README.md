@@ -1,4 +1,4 @@
 CoreLocationKit
 ===============
 
-CoreLocationKit
+Dependencies: DataKit.
