@@ -14,8 +14,7 @@
 
 @interface IDPLocationManager () <CLLocationManagerDelegate>
 @property (nonatomic, assign, readwrite)	CLLocationCoordinate2D	location;
-@property (nonatomic, assign, readwrite)	IDPLocationStatus		locationStatus;
-@property (nonatomic, assign, readwrite)    IDPModelState   state;
+@property (nonatomic, assign, readwrite)	IDPLocationStatus		status;
 
 // you can use the property for a more fine grained control of CLLocationManager
 @property (nonatomic, retain, readwrite)	CLLocationManager		*locationManager;
@@ -25,14 +24,18 @@
 
 @property (nonatomic, readwrite, getter = isScheduled)	BOOL		scheduled;
 
-- (void)updateStatus;
+- (void)notifyObserversOfBecomingAvailable;
+- (void)notifyObserversOfBecomingUnavailable;
 
-// this method should be called, when the locationStatus changed
-- (void)processStatusChange;
+- (void)notifyObserversOfLocationChanges;
+
+- (void)notifyObserversOfStatus:(IDPLocationStatus)status;
 
 @end
 
 @implementation IDPLocationManager
+
+@synthesize status	= _status;
 
 @dynamic authorizationStatus;
 
@@ -71,10 +74,15 @@
 - (void)baseInit {
 	[super baseInit];
 	
-	self.locationManager = [CLLocationManager object];
-    self.locationManager.delegate = self;
-    self.locationManager.distanceFilter = kCLDistanceFilterNone;
-    self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters;
+	CLLocationManager *manager = [CLLocationManager object];
+    manager.delegate = self;
+    manager.distanceFilter = kCLDistanceFilterNone;
+    manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters;
+	if ([manager respondsToSelector:@selector(setActivityType:)]) {
+		manager.activityType = CLActivityTypeFitness;
+	}
+	
+	self.locationManager = manager;
 }
 
 #pragma mark -
@@ -89,9 +97,32 @@
 }
 
 - (void)setLocation:(CLLocationCoordinate2D)location {
+	BOOL shouldNotify = location.latitude != _location.latitude
+						|| location.longitude != _location.longitude;
+	
 	IDPNonatomicAssignPropertySynthesize(_location, location);
 	
-	[self notifyObserversOfChanges];
+	if (shouldNotify) {
+		[self notifyObserversOfLocationChanges];
+	}
+}
+
+- (void)setStatus:(IDPLocationStatus)status {
+	BOOL shouldNotify = status != _status;
+	
+	IDPNonatomicAssignPropertySynthesize(_status, status);
+	
+	if (shouldNotify) {
+		[self notifyObserversOfStatus:status];
+	}
+}
+
+- (IDPLocationStatus)status {
+	if (![CLLocationManager locationServicesEnabled]) {
+		return kIDPLocationUnavailable;
+	}
+
+	return _status;
 }
 
 - (CLAuthorizationStatus)authorizationStatus {
@@ -101,37 +132,21 @@
 #pragma mark -
 #pragma mark Public
 
-// shortcut for load
 - (void)schedule {
-	[self load];
-}
-
-// shortcut for cancel
-- (void)unschedule {
-	[self cancel];
-}
-
-- (BOOL)load {
-	if (![super load]) {
-		return NO;
+	if (![CLLocationManager locationServicesEnabled]) {
+		return;
 	}
 	
-	[self updateStatus];
-	
-	if (kIDPLocationAvailable == self.locationStatus) {
-		[self processStatusChange];
+	if (0 == self.scheduleCount) {
 		[self.locationManager startUpdatingLocation];
-		self.scheduleCount += 1;
+	} else {
+		[self notifyObserversOfStatus:self.status];
 	}
 	
-	return kIDPLocationAvailable == self.locationStatus;
+	self.scheduleCount += 1;
 }
 
-- (void)cancel {
-    [self dump];
-}
-
-- (void)dump {
+- (void)unschedule {
 	if (0 == self.scheduleCount) {
 		return;
 	}
@@ -139,28 +154,30 @@
 	self.scheduleCount -=1;
 	if (0 == self.scheduleCount) {
 		[self.locationManager stopUpdatingLocation];
-		[super dump];
 	}
 }
 
 #pragma mark -
 #pragma mark Private
 
-- (void)updateStatus {
-	BOOL isAuthorized = kCLAuthorizationStatusAuthorized == self.authorizationStatus;
-	self.locationStatus = isAuthorized ? kIDPLocationAvailable : kIDPLocationUnavailable;
+- (void)notifyObserversOfStatus:(IDPLocationStatus)status {
+	if (kIDPLocationAvailable == status) {
+		[self notifyObserversOfBecomingAvailable];
+	} else {
+		[self notifyObserversOfBecomingUnavailable];
+	}
 }
 
-- (void)processStatusChange {
-	if (IDPModelLoading == self.state) {
-		if (kIDPLocationAvailable == self.locationStatus) {
-			[self finishLoading];
-		} else if (kCLAuthorizationStatusNotDetermined != self.authorizationStatus) {
-			[self failLoading];
-		}
-	} else {
-		[super cancel];
-	}
+- (void)notifyObserversOfBecomingAvailable {
+	[self notifyObserversWithSelector:@selector(locationManagerDidBecomeAvailable:)];
+}
+
+- (void)notifyObserversOfBecomingUnavailable {
+	[self notifyObserversWithSelector:@selector(locationManagerDidBecomeUnavailable:)];
+}
+
+- (void)notifyObserversOfLocationChanges {
+	[self notifyObserversWithSelector:@selector(locationManagerDidChangeLocation:)];
 }
 
 #pragma mark -
@@ -169,13 +186,30 @@
 - (void)		 locationManager:(CLLocationManager *)manager
 	didChangeAuthorizationStatus:(CLAuthorizationStatus)status
 {
-	[self updateStatus];
-	[self processStatusChange];
+	if (kCLAuthorizationStatusNotDetermined == status) {
+		self.status = kIDPLocationUnavailable;		
+		[self.locationManager startUpdatingLocation];
+	} else if (kCLAuthorizationStatusAuthorized == status) {
+//		self.status = kIDPLocationAvailable;
+//		self.location = manager.location.coordinate;
+	} else {
+		[self.locationManager stopUpdatingLocation];
+		self.status = kIDPLocationUnavailable;
+	}
+}
+
+- (void)locationManagerDidPauseLocationUpdates:(CLLocationManager *)manager {
+	self.status = kIDPLocationUnavailable;
+}
+
+- (void)locationManagerDidResumeLocationUpdates:(CLLocationManager *)manager {
+	self.status = kIDPLocationAvailable;
 }
 
 - (void)locationManager:(CLLocationManager *)manager
 	 didUpdateLocations:(NSArray *)locations
 {
+	self.status = kIDPLocationAvailable;
 	self.location = manager.location.coordinate;
 }
 
@@ -192,11 +226,7 @@
 - (void)locationManager:(CLLocationManager *)manager
 	   didFailWithError:(NSError *)error
 {
-	BOOL isUnavailable = (kCLErrorDenied == error.code
-						  || kCLErrorNetwork == error.code
-						  || kCLErrorLocationUnknown == error.code);
-	[self updateStatus];
-	[self processStatusChange];
+	self.status = kIDPLocationUnavailable;
 }
 
 @end
