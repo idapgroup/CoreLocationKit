@@ -22,7 +22,8 @@
 @end
 
 typedef enum  {
-	kIDPLocationUnavailable = 0,
+	kIDPLocationUndefined = 0,
+	kIDPLocationUnavailable,
 	kIDPLocationAvailable
 } IDPLocationStatus;
 

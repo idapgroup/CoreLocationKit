@@ -74,6 +74,8 @@
 - (void)baseInit {
 	[super baseInit];
 	
+	self.status = kIDPLocationUndefined;
+	
 	CLLocationManager *manager = [CLLocationManager object];
     manager.delegate = self;
     manager.distanceFilter = kCLDistanceFilterNone;
@@ -100,9 +102,15 @@
 	BOOL shouldNotify = location.latitude != _location.latitude
 						|| location.longitude != _location.longitude;
 	
+	BOOL isInvalid = location.latitude == 0
+						|| location.longitude == 0;
+	
 	IDPNonatomicAssignPropertySynthesize(_location, location);
 	
 	if (shouldNotify) {
+		_status = isInvalid ? kIDPLocationUnavailable : kIDPLocationAvailable;
+		[self notifyObserversOfStatus:_status];
+		
 		[self notifyObserversOfLocationChanges];
 	}
 }
@@ -141,6 +149,9 @@
 		[self.locationManager startUpdatingLocation];
 	} else {
 		[self notifyObserversOfStatus:self.status];
+		if (kIDPLocationAvailable == self.status) {
+			[self notifyObserversOfLocationChanges];
+		}
 	}
 	
 	self.scheduleCount += 1;
@@ -187,11 +198,10 @@
 	didChangeAuthorizationStatus:(CLAuthorizationStatus)status
 {
 	if (kCLAuthorizationStatusNotDetermined == status) {
-		self.status = kIDPLocationUnavailable;		
+		self.status = kIDPLocationUndefined;
 		[self.locationManager startUpdatingLocation];
 	} else if (kCLAuthorizationStatusAuthorized == status) {
-//		self.status = kIDPLocationAvailable;
-//		self.location = manager.location.coordinate;
+		self.location = manager.location.coordinate;
 	} else {
 		[self.locationManager stopUpdatingLocation];
 		self.status = kIDPLocationUnavailable;
@@ -209,7 +219,6 @@
 - (void)locationManager:(CLLocationManager *)manager
 	 didUpdateLocations:(NSArray *)locations
 {
-	self.status = kIDPLocationAvailable;
 	self.location = manager.location.coordinate;
 }
 
